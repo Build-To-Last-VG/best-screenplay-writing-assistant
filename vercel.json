@@ -1,10 +1,5 @@
 {
   "version": 2,
-  "env": {
-    "VITE_SUPABASE_URL": "@supabase_url",
-    "VITE_SUPABASE_ANON_KEY": "@supabase_anon_key",
-    "VITE_BUFFER_API_KEY": "@buffer_api_key"
-  },
   "rewrites": [
     {
       "source": "/signup",
