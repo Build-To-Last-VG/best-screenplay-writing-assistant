@@ -1,0 +1,33 @@
+{
+  "brand_name": "Stomo",
+  "version": "1.0",
+  "tagline": "From the story in your heart to the people who need to hear it",
+  "colors": {
+    "primary_amber": "#D97706",
+    "primary_amber_light": "#F59E0B",
+    "primary_amber_dark": "#B45309",
+    "ink_dark_blue": "#1E3A8A",
+    "ink_dark_blue_light": "#3730A3",
+    "ink_gray": "#374151",
+    "ink_gray_dark": "#1F2937",
+    "paper_cream": "#FAF8F3",
+    "paper_light": "#FEF9EF",
+    "paper_white": "#FFFFFF",
+    "accent_error": "#DC2626",
+    "accent_success": "#059669",
+    "accent_warning": "#D97706",
+    "text_primary": "#1F2937",
+    "text_secondary": "#6B7280",
+    "text_light": "#9CA3AF",
+    "border_light": "#E5E7EB",
+    "border_medium": "#D1D5DB",
+    "shadow_light": "rgba(0, 0, 0, 0.05)",
+    "shadow_medium": "rgba(0, 0, 0, 0.1)"
+  },
+  "for_agents": {
+    "marketing_agent": "Reference colors, tone, and messaging. Ensure all content follows brand guidelines.",
+    "product_agent": "Use color scheme and spacing for UI consistency.",
+    "reach_agent": "Use brand voice guidelines for content.",
+    "tech_agent": "Use color values for frontend builds."
+  }
+}
