@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { supabase } from "./supabase";
 
 /* ============================================================
-   SCRIPT STUDIO v2 — AI screenwriting workshop
-   - Multiple projects (project library)
-   - Export/Import as .json backup files (chat-deletion-proof)
+   STOMO (Script Studio v2) — AI screenwriting workshop
+   - Multiple projects (project library, synced to your account)
+   - Export/Import as .json backup files
    Knowledge compiled from: StudioBinder, MasterClass, Blake
    Snyder's "Save the Cat", NYC Midnight formatting guide,
    script-coverage rubrics (Slated, Final Draft, TV Calling),
@@ -153,9 +154,6 @@ const EMPTY_PROJECT = {
   chats: {},
 };
 
-const INDEX_KEY = "ss:index";
-const LEGACY_KEY = "script-studio-project-v1";
-const projKey = (id) => `ss:proj:${id}`;
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const truncate = (s, n) => (s && s.length > n ? s.slice(0, n) + " […]" : s || "");
 const fmtDate = (ts) => (ts ? new Date(ts).toLocaleString() : "—");
@@ -178,32 +176,24 @@ function buildContext(p) {
   return parts.join("\n\n");
 }
 
-/* ---------- API ---------- */
+/* ---------- API (via our serverless proxy — keeps the key secret) ---------- */
 async function callClaude(system, messages) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData?.session?.access_token;
+  const response = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, system, messages }),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token || ""}` },
+    body: JSON.stringify({ system, messages }),
   });
   const data = await response.json();
-  if (data.error) throw new Error(data.error.message || "API error");
+  if (!response.ok || data.error) {
+    const msg = typeof data.error === "string" ? data.error : data.error?.message;
+    throw new Error(msg || "API error");
+  }
   return (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
 }
 
-/* ---------- storage helpers ---------- */
-async function loadIndex() {
-  try {
-    const r = await window.storage.get(INDEX_KEY);
-    if (r?.value) return JSON.parse(r.value);
-  } catch (e) { /* no index yet */ }
-  return null;
-}
-async function saveIndex(index) {
-  try { await window.storage.set(INDEX_KEY, JSON.stringify(index)); return true; }
-  catch (e) { console.error("index save failed", e); return false; }
-}
-
-export default function ScriptStudio() {
+export default function ScriptStudio({ user, onLogout }) {
   const [screen, setScreen] = useState("loading"); // loading | home | studio
   const [index, setIndex] = useState([]);
   const [projectId, setProjectId] = useState(null);
@@ -227,25 +217,19 @@ export default function ScriptStudio() {
 
   const flash = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2600); };
 
-  /* ---------- initial load + legacy migration ---------- */
+  /* ---------- initial load: project list from Supabase ---------- */
   useEffect(() => {
     (async () => {
-      let idx = await loadIndex();
-      if (!idx) {
-        idx = [];
-        // migrate the old single-project version if present
-        try {
-          const legacy = await window.storage.get(LEGACY_KEY);
-          if (legacy?.value) {
-            const p = { ...EMPTY_PROJECT, ...JSON.parse(legacy.value) };
-            const id = newId();
-            await window.storage.set(projKey(id), JSON.stringify(p));
-            idx = [{ id, title: p.title, updatedAt: Date.now() }];
-            await saveIndex(idx);
-          }
-        } catch (e) { /* nothing to migrate */ }
+      const { data, error } = await supabase
+        .from("projects")
+        .select("id, title, updated_at")
+        .order("updated_at", { ascending: false });
+      if (error) {
+        console.error("could not load projects", error);
+        setIndex([]);
+      } else {
+        setIndex((data || []).map((r) => ({ id: r.id, title: r.title, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : null })));
       }
-      setIndex(idx);
       setScreen("home");
     })();
   }, []);
@@ -257,11 +241,16 @@ export default function ScriptStudio() {
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        const ok1 = await window.storage.set(projKey(projectId), JSON.stringify(project));
-        const newIdx = index.map((e) => (e.id === projectId ? { ...e, title: project.title, updatedAt: Date.now() } : e));
-        setIndex(newIdx);
-        const ok2 = await saveIndex(newIdx);
-        setSaveState(ok1 && ok2 ? "saved" : "error");
+        const { error } = await supabase.from("projects").upsert({
+          id: projectId,
+          user_id: user.id,
+          title: project.title,
+          data: project,
+          updated_at: new Date().toISOString(),
+        });
+        if (error) throw error;
+        setIndex((idx) => idx.map((e) => (e.id === projectId ? { ...e, title: project.title, updatedAt: Date.now() } : e)));
+        setSaveState("saved");
       } catch (e) {
         console.error("save failed", e);
         setSaveState("error");
@@ -279,29 +268,24 @@ export default function ScriptStudio() {
   const createProject = async () => {
     const id = newId();
     const p = { ...EMPTY_PROJECT };
-    try { await window.storage.set(projKey(id), JSON.stringify(p)); } catch (e) {}
-    const newIdx = [{ id, title: p.title, updatedAt: Date.now() }, ...index];
-    setIndex(newIdx); await saveIndex(newIdx);
+    const { error } = await supabase.from("projects").insert({ id, user_id: user.id, title: p.title, data: p });
+    if (error) { flash("Could not create project: " + error.message); return; }
+    setIndex((idx) => [{ id, title: p.title, updatedAt: Date.now() }, ...idx]);
     setProjectId(id); setProject(p); setStageId("idea"); setScreen("studio");
   };
 
   const openProject = async (id) => {
-    try {
-      const r = await window.storage.get(projKey(id));
-      if (r?.value) {
-        setProject({ ...EMPTY_PROJECT, ...JSON.parse(r.value) });
-        setProjectId(id); setStageId("idea"); setScreen("studio");
-        return;
-      }
-      flash("Project data not found");
-    } catch (e) { flash("Could not open project: " + e.message); }
+    const { data, error } = await supabase.from("projects").select("data").eq("id", id).single();
+    if (error || !data?.data) { flash("Could not open project" + (error ? ": " + error.message : "")); return; }
+    setProject({ ...EMPTY_PROJECT, ...data.data });
+    setProjectId(id); setStageId("idea"); setScreen("studio");
   };
 
   const deleteProject = async (id, title) => {
     if (!confirm(`Delete "${title}" permanently? Export a backup first if you want to keep it.`)) return;
-    try { await window.storage.delete(projKey(id)); } catch (e) {}
-    const newIdx = index.filter((e) => e.id !== id);
-    setIndex(newIdx); await saveIndex(newIdx);
+    const { error } = await supabase.from("projects").delete().eq("id", id);
+    if (error) { flash("Delete failed: " + error.message); return; }
+    setIndex((idx) => idx.filter((e) => e.id !== id));
     flash("Project deleted");
   };
 
@@ -319,10 +303,9 @@ export default function ScriptStudio() {
   };
 
   const exportFromHome = async (id) => {
-    try {
-      const r = await window.storage.get(projKey(id));
-      if (r?.value) exportProject(JSON.parse(r.value));
-    } catch (e) { flash("Export failed: " + e.message); }
+    const { data, error } = await supabase.from("projects").select("data").eq("id", id).single();
+    if (error || !data?.data) { flash("Export failed" + (error ? ": " + error.message : "")); return; }
+    exportProject(data.data);
   };
 
   const importFile = (e) => {
@@ -333,11 +316,11 @@ export default function ScriptStudio() {
       try {
         const raw = JSON.parse(reader.result);
         const p = { ...EMPTY_PROJECT, ...(raw.project || raw) };
-        if (typeof p.title !== "string" || !Array.isArray(p.scenes)) throw new Error("not a Script Studio backup");
+        if (typeof p.title !== "string" || !Array.isArray(p.scenes)) throw new Error("not a Stomo backup");
         const id = newId();
-        await window.storage.set(projKey(id), JSON.stringify(p));
-        const newIdx = [{ id, title: p.title + " (imported)", updatedAt: Date.now() }, ...index];
-        setIndex(newIdx); await saveIndex(newIdx);
+        const { error } = await supabase.from("projects").insert({ id, user_id: user.id, title: p.title + " (imported)", data: p });
+        if (error) throw new Error(error.message);
+        setIndex((idx) => [{ id, title: p.title + " (imported)", updatedAt: Date.now() }, ...idx]);
         flash(`Imported "${p.title}"`);
       } catch (err) { flash("Import failed: " + err.message); }
     };
@@ -444,9 +427,15 @@ export default function ScriptStudio() {
       <div style={{ height: "100vh", overflowY: "auto", background: "#26282c", fontFamily: "'Inter', system-ui, sans-serif", color: "#e8e5dc", padding: "40px 20px" }}>
         {fonts}
         <div style={{ maxWidth: 720, margin: "0 auto" }}>
-          <div style={{ fontFamily: "'Courier Prime', monospace", letterSpacing: 4, fontSize: 22, fontWeight: 700 }}>SCRIPT STUDIO</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontFamily: "'Courier Prime', monospace", letterSpacing: 4, fontSize: 22, fontWeight: 700 }}>STOMO</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 12, color: "#77746b" }}>{user?.email}</span>
+              <button onClick={onLogout} style={{ background: "transparent", color: "#d8d5cc", border: "1px solid #55585e", borderRadius: 4, padding: "6px 12px", fontSize: 12 }}>Log out</button>
+            </div>
+          </div>
           <div style={{ color: "#9a978e", fontSize: 13, marginTop: 4, marginBottom: 28 }}>
-            Your project library. Everything auto-saves here — and every project can be exported as a backup file that survives even a deleted chat.
+            Your project library. Everything auto-saves to your account — and every project can be exported as a backup file on your computer.
           </div>
 
           <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
@@ -483,7 +472,7 @@ export default function ScriptStudio() {
           </div>
 
           <div style={{ marginTop: 32, fontSize: 12, color: "#77746b", lineHeight: 1.7, borderTop: "1px solid #3a3d42", paddingTop: 16 }}>
-            <strong style={{ color: "#9a978e" }}>Backup rule:</strong> the library lives inside this artifact. If this chat is ever deleted, the library goes with it — your exported .json files on your computer do not. Export after every serious writing session; import restores everything (scenes, characters, chats) in any copy of this tool.
+            <strong style={{ color: "#9a978e" }}>Backup rule:</strong> your library is saved to your Stomo account and syncs across devices. For extra safety, export a .json backup after every serious writing session — import restores everything (scenes, characters, chats) anytime.
           </div>
         </div>
         {toast && <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", background: "#F7F5EC", color: "#26241f", padding: "8px 18px", borderRadius: 20, fontSize: 13, zIndex: 50 }}>{toast}</div>}

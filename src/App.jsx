@@ -1,150 +1,124 @@
-import { useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient("https://vdtiqjwatlxjunqunlyk.supabase.co", "sb_publishable_Rj8VXIos27E9m-rrd101lQ_Tn5G8qvp");
-
-const QUESTIONS = {
-  movie: [
-    { id: "protagonist", q: "Who is your protagonist?", placeholder: "e.g., cynical journalist" },
-    { id: "antagonist", q: "Who opposes them?", placeholder: "e.g., corrupt politician" },
-    { id: "want", q: "What do they want?", placeholder: "e.g., expose truth" },
-    { id: "need", q: "What do they need?", placeholder: "e.g., trust again" },
-    { id: "stakes", q: "What if they fail?", placeholder: "e.g., truth dies" },
-    { id: "setting", q: "Where and when?", placeholder: "e.g., DC present" },
-    { id: "genre", q: "Genre and tone?", placeholder: "e.g., thriller" },
-    { id: "theme", q: "What is it about?", placeholder: "e.g., cost of truth" },
-  ],
-  tv: [
-    { id: "protagonist", q: "Protagonist?", placeholder: "detective" },
-    { id: "world", q: "World?", placeholder: "precinct" },
-    { id: "engine", q: "What drives episodes?", placeholder: "cases + mystery" },
-    { id: "stakes", q: "Stakes?", placeholder: "solving" },
-    { id: "arc", q: "Character arc?", placeholder: "confronting past" },
-    { id: "tone", q: "Tone?", placeholder: "drama" },
-  ],
-  novel: [
-    { id: "protagonist", q: "Main character?", placeholder: "woman" },
-    { id: "conflict", q: "Conflict?", placeholder: "past vs future" },
-    { id: "setting", q: "Setting?", placeholder: "Ireland 1950s" },
-    { id: "stakes", q: "Stakes?", placeholder: "identity" },
-    { id: "arc", q: "How do they change?", placeholder: "standing ground" },
-    { id: "genre", q: "Genre?", placeholder: "literary fiction" },
-  ],
-};
+import { useState, useEffect } from "react";
+import { supabase } from "./supabase";
+import ScriptStudio from "./ScriptStudio";
 
 export default function App() {
-  const [screen, setScreen] = useState("auth");
-  const [authMode, setAuthMode] = useState("login");
-  const [user, setUser] = useState(null);
+  const [session, setSession] = useState(undefined); // undefined = checking
+  const [authMode, setAuthMode] = useState("login"); // login | register
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
-  const [medium, setMedium] = useState(null);
-  const [title, setTitle] = useState("");
-  const [logline, setLogline] = useState("");
-  const [answers, setAnswers] = useState({});
-  const [currentQ, setCurrentQ] = useState(0);
-  const [bible, setBible] = useState(null);
-  const [saved, setSaved] = useState(false);
 
-  const questionList = medium ? QUESTIONS[medium] : [];
-  const progress = questionList.length ? ((currentQ + 1) / questionList.length) * 100 : 0;
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
 
   const handleAuth = async () => {
-    if (!email || !password) return setAuthError("Email and password required");
+    if (!email || !password) { setAuthError("Email and password required"); return; }
     setLoading(true);
+    setAuthError("");
+    setNotice("");
     try {
-      const res = authMode === "register" ? await supabase.auth.signUp({ email, password }) : await supabase.auth.signInWithPassword({ email, password });
-      if (res.error) throw new Error(res.error.message);
-      setUser(res.data.user);
-      setScreen("create");
-      setEmail("");
-      setPassword("");
-      setAuthError("");
+      if (authMode === "register") {
+        const { data, error } = await supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        if (!data.session) {
+          setNotice("Check your inbox — confirm your email, then log in.");
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+      }
     } catch (e) {
-      setAuthError(e.message);
+      setAuthError(e.message || "Something went wrong");
     }
     setLoading(false);
   };
 
-  const logout = () => { setUser(null); setScreen("auth"); setMedium(null); setTitle(""); setLogline(""); setAnswers({}); setCurrentQ(0); setBible(null); };
-  const startStory = (med) => { if (!title.trim()) return alert("Enter title"); setMedium(med); setCurrentQ(0); setAnswers({}); setScreen("questions"); };
-  const updateAnswer = (val) => { setAnswers((a) => ({ ...a, [questionList[currentQ].id]: val })); };
-  const finishQuestions = () => { setBible({ id: Math.random().toString(36).slice(2, 11), title, medium, logline, answers, created_at: new Date().toISOString() }); setScreen("bible"); };
-  
-  const saveBible = async () => {
-    try {
-      const res = await supabase.from("stories").insert([{ ...bible, user_id: user.id }]);
-      if (res.error) throw new Error(res.error.message);
-      setSaved(true);
-      setTimeout(() => { setScreen("create"); setMedium(null); setTitle(""); setLogline(""); setAnswers({}); setCurrentQ(0); }, 1500);
-    } catch (e) {
-      alert("Save failed: " + e.message);
-    }
+  const logout = async () => {
+    await supabase.auth.signOut();
   };
 
-  const exportBible = () => {
-    const blob = new Blob([JSON.stringify(bible, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = (bible.title || "story").replace(/\s+/g, "-").toLowerCase() + ".json";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const S = styles();
-  const q = questionList[currentQ];
-
-  if (screen === "auth") {
-    return (<div style={S.container}><div style={S.authBox}><div style={S.logo}>STOMO</div><div style={S.tagline}>Your story. Guided by craft.</div><div style={S.authTabs}><button onClick={() => setAuthMode("login")} style={{ ...S.tabBtn, borderBottom: authMode === "login" ? "3px solid #d97706" : "none" }}>Log In</button><button onClick={() => setAuthMode("register")} style={{ ...S.tabBtn, borderBottom: authMode === "register" ? "3px solid #d97706" : "none" }}>Sign Up</button></div><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleAuth()} placeholder="Email" style={S.input} /><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleAuth()} placeholder="Password" style={S.input} />{authError && <div style={S.error}>{authError}</div>}<button onClick={handleAuth} disabled={loading} style={S.primaryBtn}>{loading ? "..." : authMode === "login" ? "Log In" : "Sign Up"}</button></div></div>);
+  if (session === undefined) {
+    return <div style={S.loading}>Loading…</div>;
   }
 
-  if (screen === "create") {
-    return (<div style={S.container}><div style={S.topBar}><div style={S.logo}>STOMO</div><button onClick={logout} style={S.logoutBtn}>Log out</button></div><div style={S.mainBox}><h1 style={S.h1}>Start a New Story</h1>{!medium ? (<><input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Story Title" style={S.input} /><div style={S.mediumGrid}>{[{ id: "movie", label: "Movie", icon: "🎬" }, { id: "tv", label: "TV", icon: "📺" }, { id: "novel", label: "Novel", icon: "📖" }].map((m) => (<button key={m.id} onClick={() => startStory(m.id)} style={S.mediumCard}>{m.icon} {m.label}</button>))}</div></>) : (<><textarea value={logline} onChange={(e) => setLogline(e.target.value)} placeholder="Logline (optional)" style={S.textarea} /><button onClick={() => setScreen("questions")} style={S.primaryBtn}>Start Questions →</button><button onClick={() => setMedium(null)} style={S.secondaryBtn}>← Change</button></>)}</div></div>);
+  if (session) {
+    return <ScriptStudio user={session.user} onLogout={logout} />;
   }
 
-  if (screen === "questions") {
-    return (<div style={S.container}><div style={S.topBar}><div style={S.logo}>STOMO</div><button onClick={logout} style={S.logoutBtn}>Log out</button></div><div style={S.questionBox}><div style={{ ...S.progressBar, width: `${progress}%` }} /><div style={S.questionContent}><div style={S.qNumber}>Q{currentQ + 1}/{questionList.length}</div><h2 style={S.qText}>{q.q}</h2><textarea value={answers[q.id] || ""} onChange={(e) => updateAnswer(e.target.value)} placeholder={q.placeholder} style={S.textarea} autoFocus rows={4} /><div style={S.qActions}><button onClick={() => currentQ > 0 && setCurrentQ(currentQ - 1)} disabled={currentQ === 0} style={S.secondaryBtn}>← Back</button><button onClick={currentQ === questionList.length - 1 ? finishQuestions : () => setCurrentQ(currentQ + 1)} style={S.primaryBtn}>{currentQ === questionList.length - 1 ? "Finish →" : "Next →"}</button></div></div></div></div>);
-  }
+  return (
+    <div style={S.page}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        input:focus-visible, button:focus-visible { outline: 2px solid #D97706; outline-offset: 2px; }
+      `}</style>
+      <div style={S.box}>
+        <div style={S.logo}>STOMO</div>
+        <div style={S.tagline}>From the story in your heart to the people who need to hear it.</div>
 
-  if (screen === "bible" && bible) {
-    return (<div style={S.container}><div style={S.topBar}><div style={S.logo}>STOMO</div><button onClick={logout} style={S.logoutBtn}>Log out</button></div><div style={S.mainBox}><h1 style={S.h1}>Your Story Bible</h1><div style={S.bibleBox}><div><strong>Title:</strong> {bible.title}</div><div><strong>Medium:</strong> {bible.medium}</div>{bible.logline && <div><strong>Logline:</strong> {bible.logline}</div>}{Object.entries(bible.answers).map(([key, value]) => (<div key={key}><strong>{questionList.find((q) => q.id === key)?.q}:</strong> {value}</div>))}</div><div style={S.actions}>{saved && <div style={S.success}>✓ Saved!</div>}<button onClick={saveBible} disabled={saved} style={S.primaryBtn}>{saved ? "Saved ✓" : "Save to Account"}</button><button onClick={exportBible} style={S.secondaryBtn}>⤓ Export JSON</button><button onClick={() => { setScreen("create"); setMedium(null); setTitle(""); setLogline(""); setAnswers({}); setCurrentQ(0); setSaved(false); }} style={S.secondaryBtn}>New Story</button></div></div></div>);
-  }
+        <div style={S.tabs}>
+          <button onClick={() => { setAuthMode("login"); setAuthError(""); setNotice(""); }}
+            style={{ ...S.tab, borderBottom: authMode === "login" ? "3px solid #D97706" : "3px solid transparent", color: authMode === "login" ? "#F7F5EC" : "#9a978e", fontWeight: authMode === "login" ? 700 : 400 }}>
+            Log In
+          </button>
+          <button onClick={() => { setAuthMode("register"); setAuthError(""); setNotice(""); }}
+            style={{ ...S.tab, borderBottom: authMode === "register" ? "3px solid #D97706" : "3px solid transparent", color: authMode === "register" ? "#F7F5EC" : "#9a978e", fontWeight: authMode === "register" ? 700 : 400 }}>
+            Sign Up
+          </button>
+        </div>
 
-  return null;
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleAuth()}
+          placeholder="Email"
+          style={S.input}
+          autoComplete="email"
+        />
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleAuth()}
+          placeholder="Password (min. 6 characters)"
+          style={S.input}
+          autoComplete={authMode === "register" ? "new-password" : "current-password"}
+        />
+
+        {authError && <div style={S.error}>{authError}</div>}
+        {notice && <div style={S.notice}>{notice}</div>}
+
+        <button onClick={handleAuth} disabled={loading} style={S.primaryBtn}>
+          {loading ? "…" : authMode === "login" ? "Log In" : "Create Account"}
+        </button>
+
+        <div style={S.hint}>
+          Your projects are saved to your account and sync across devices.
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function styles() {
-  return {
-    container: { minHeight: "100vh", background: "linear-gradient(135deg, #faf8f3 0%, #fef9ef 100%)", display: "flex", flexDirection: "column", fontFamily: "'Inter', system-ui" },
-    topBar: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 32px", background: "white", borderBottom: "1px solid #e5e7eb" },
-    logo: { fontFamily: "'Courier Prime', monospace", fontWeight: 700, fontSize: 18, letterSpacing: 2, color: "#1e3a8a" },
-    logoutBtn: { background: "transparent", border: "1px solid #ddd", padding: "8px 16px", borderRadius: 6, cursor: "pointer", fontSize: 14 },
-    authBox: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: 40 },
-    mainBox: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "40px 20px" },
-    h1: { fontSize: 36, fontWeight: 700, color: "#1e3a8a", marginBottom: 40, textAlign: "center" },
-    tagline: { fontSize: 18, color: "#6b7280", textAlign: "center", marginBottom: 32 },
-    authTabs: { display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 24 },
-    tabBtn: { background: "transparent", border: "none", padding: "12px 20px", cursor: "pointer", color: "#6b7280" },
-    input: { width: "100%", maxWidth: 400, padding: "12px 14px", border: "1px solid #d1d5db", borderRadius: 8, marginBottom: 16, fontSize: 14 },
-    textarea: { width: "100%", padding: "12px 14px", border: "1px solid #d1d5db", borderRadius: 8, marginBottom: 16, fontSize: 14, resize: "none", lineHeight: 1.5 },
-    primaryBtn: { background: "#d97706", color: "white", border: "none", padding: "12px 24px", borderRadius: 8, cursor: "pointer", fontWeight: 600 },
-    secondaryBtn: { background: "#f3f4f6", color: "#374151", border: "1px solid #d1d5db", padding: "12px 24px", borderRadius: 8, cursor: "pointer" },
-    error: { color: "#991b1b", background: "#fee2e2", padding: "12px 14px", borderRadius: 6, marginBottom: 16 },
-    mediumGrid: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginTop: 20 },
-    mediumCard: { background: "white", border: "2px solid #e5e7eb", borderRadius: 12, padding: 24, cursor: "pointer", fontSize: 14 },
-    questionBox: { flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "40px 20px" },
-    progressBar: { position: "fixed", top: 0, left: 0, height: 4, background: "#d97706", transition: "width 0.3s" },
-    questionContent: { background: "white", borderRadius: 12, padding: 40, maxWidth: 600, margin: "0 auto" },
-    qNumber: { fontSize: 12, fontWeight: 600, color: "#9ca3af", marginBottom: 16 },
-    qText: { fontSize: 24, fontWeight: 700, color: "#1e3a8a", margin: "0 0 24px 0" },
-    qActions: { display: "flex", gap: 12, marginTop: 24 },
-    bibleBox: { background: "white", borderRadius: 12, padding: 32, maxWidth: 700, margin: "0 auto" },
-    actions: { display: "flex", gap: 12, marginTop: 24, justifyContent: "center", flexWrap: "wrap" },
-    success: { color: "#059669", fontWeight: 600 },
-  };
-}
+const S = {
+  loading: { height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#26282c", color: "#9a978e", fontFamily: "'Courier Prime', monospace" },
+  page: { minHeight: "100vh", background: "#26282c", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', system-ui, sans-serif", padding: 20 },
+  box: { width: "100%", maxWidth: 380, background: "#1c1e21", border: "1px solid #3a3d42", borderRadius: 8, padding: "36px 28px", boxShadow: "0 8px 30px rgba(0,0,0,.5)" },
+  logo: { fontFamily: "'Courier Prime', monospace", letterSpacing: 5, fontSize: 26, fontWeight: 700, color: "#F7F5EC", textAlign: "center" },
+  tagline: { color: "#9a978e", fontSize: 13, textAlign: "center", marginTop: 8, marginBottom: 26, lineHeight: 1.5 },
+  tabs: { display: "flex", marginBottom: 22, borderBottom: "1px solid #3a3d42" },
+  tab: { flex: 1, background: "transparent", border: "none", padding: "10px 0", fontSize: 14, cursor: "pointer", fontFamily: "inherit" },
+  input: { width: "100%", background: "#26282c", border: "1px solid #55585e", borderRadius: 6, color: "#F7F5EC", padding: "11px 13px", fontSize: 14, marginBottom: 12, fontFamily: "inherit" },
+  error: { background: "#3d2426", color: "#e0a3a3", border: "1px solid #5a3336", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 12 },
+  notice: { background: "#243d2b", color: "#a3e0b0", border: "1px solid #335a3c", borderRadius: 6, padding: "10px 12px", fontSize: 13, marginBottom: 12 },
+  primaryBtn: { width: "100%", background: "#D97706", color: "#1c1e21", border: "none", borderRadius: 6, padding: "12px 0", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" },
+  hint: { color: "#77746b", fontSize: 11.5, textAlign: "center", marginTop: 18, lineHeight: 1.5 },
+};
