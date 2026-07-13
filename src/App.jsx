@@ -71,7 +71,7 @@ export default function App() {
   const logout = () => { setUser(null); setScreen("auth"); setMedium(null); setTitle(""); setLogline(""); setAnswers({}); setCurrentQ(0); setBible(null); };
   const startStory = (med) => { if (!title.trim()) return alert("Enter title"); setMedium(med); setCurrentQ(0); setAnswers({}); setScreen("questions"); };
   const updateAnswer = (val) => { setAnswers((a) => ({ ...a, [questionList[currentQ].id]: val })); };
-  const finishQuestions = () => { setBible({ id: Math.random().toString(36).slice(2, 11), title, medium, logline, answers, createdAt: new Date().toISOString() }); setScreen("bible"); };
+  const finishQuestions = () => { setBible({ id: Math.random().toString(36).slice(2, 11), title, medium, logline, answers, created_at: new Date().toISOString() }); setScreen("bible"); };
   
   const saveBible = async () => {
     try {
